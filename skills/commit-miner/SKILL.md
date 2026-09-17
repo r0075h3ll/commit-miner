@@ -1,11 +1,11 @@
 ---
 name: commit-miner
-description: Use the commit-miner CLI and Jev to classify local or GitHub commit history by bug fixes, security fixes/CWEs, and change type. Use for requests to classify a specific commit, analyze the last N commits, examine a date range, or export classifications as HTML or CSV.
+description: Use the commit-miner CLI and an OpenRouter model to classify local or GitHub commit history by bug fixes, security fixes/CWEs, and change type. Use for requests to classify a specific commit, analyze the last N commits, examine a date range, or export classifications as HTML or CSV.
 ---
 
 # commit-miner
 
-Use the CLI to classify actual commit diffs and messages with Jev. Preserve the requested repository, commit scope, filters, and output. Use the current checkout when the repository is implicit. Do not substitute your own classifications or source/message matching.
+Use the CLI to classify actual commit diffs and messages with an LLM via OpenRouter. Preserve the requested repository, commit scope, filters, and output. Use the current checkout when the repository is implicit. Do not substitute your own classifications or source/message matching.
 
 ## Binary setup
 
@@ -17,9 +17,9 @@ export PATH="$HOME/.cargo/bin:$PATH"
 commit-miner --version
 ```
 
-Replace the source path with the actual checkout. If unavailable, install from the official repository with `cargo install --git https://github.com/devanshbatham/commit-miner.git --locked`. Do not install a similarly named package. A copied prebuilt binary needs Git, but no Rust, Node, or server at runtime.
+Replace the source path with the actual checkout. If unavailable, install from the official repository with `cargo install --git https://github.com/r0075h3ll/commit-miner.git --locked`. Do not install a similarly named package. A copied prebuilt binary needs Git, but no Rust, Node, or server at runtime.
 
-Scans require `TYPESAFE_API_KEY` in the environment. If absent, ask the user to configure it locally; never request, print, or embed the key in commands or reports. `JEV_MODEL` defaults to `jev-latest`. Reading/exporting saved scans requires no key.
+Scans require `OPENROUTER_API_KEY` in the environment. If absent, ask the user to configure it locally; never request, print, or embed the key in commands or reports. `OPENROUTER_MODEL` (or `--model`) selects the model and defaults to `meta-llama/llama-3.3-70b-instruct`, an open-weight model. Low-cost GPT options like `openai/gpt-5-mini` and `openai/gpt-5-nano` are also supported; see the README for the full recommended list. Reading/exporting saved scans requires no key.
 
 ## Commands
 

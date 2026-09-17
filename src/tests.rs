@@ -1,8 +1,8 @@
 use crate::{
     git,
-    jev::{Event, Jev},
     miner,
     model::*,
+    router::{Event, Router},
     store::Store,
 };
 use serde_json::{Value, json};
@@ -81,9 +81,12 @@ async fn mock_scores(
                 assert!(n > 0);
                 bytes.extend_from_slice(&b[..n]);
             }
-            let body: Value = serde_json::from_slice(&bytes[boundary..boundary + len]).unwrap();
-            let answers=body["questions"].as_object().unwrap().keys().map(|id|(id.clone(),json!({"type":"noul","noul":if positive.contains(&id.as_str()){0.97}else{0.03}}))).collect::<serde_json::Map<_,_>>();
-            let payload = json!({"model":"mock-jev","answers":answers,"usage":{"input_tokens":100,"output_tokens":3}}).to_string();
+            let request: Value = serde_json::from_slice(&bytes[boundary..boundary + len]).unwrap();
+            let body: Value =
+                serde_json::from_str(request["messages"][1]["content"].as_str().unwrap()).unwrap();
+            let answers=body["questions"].as_object().unwrap().keys().map(|id|{let score:f64=if positive.contains(&id.as_str()){0.97}else{0.03};(id.clone(),json!(score))}).collect::<serde_json::Map<_,_>>();
+            let content = Value::Object(answers).to_string();
+            let payload = json!({"model":"mock-openrouter","choices":[{"message":{"content":content}}],"usage":{"prompt_tokens":100,"completion_tokens":3}}).to_string();
             socket.write_all(format!("HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nRetry-After: 0\r\nConnection: close\r\n\r\n{payload}",payload.len()).as_bytes()).await.unwrap();
             let final_review = status == 200
                 && matches!(
@@ -127,11 +130,13 @@ async fn parallel_mock() -> (String, tokio::task::JoinHandle<(Vec<Value>, usize)
                         let head=String::from_utf8_lossy(&bytes[..boundary]);
                         let len=head.lines().find_map(|l|l.to_ascii_lowercase().strip_prefix("content-length:").and_then(|s|s.trim().parse::<usize>().ok())).unwrap();
                         while bytes.len()<boundary+len {let mut chunk=[0;4096];let n=socket.read(&mut chunk).await.unwrap();assert!(n>0);bytes.extend_from_slice(&chunk[..n]);}
-                        let body:Value=serde_json::from_slice(&bytes[boundary..boundary+len]).unwrap();
+                        let request:Value=serde_json::from_slice(&bytes[boundary..boundary+len]).unwrap();
+                        let body:Value=serde_json::from_str(request["messages"][1]["content"].as_str().unwrap()).unwrap();
                         peak.fetch_max(active.fetch_add(1,Ordering::SeqCst)+1,Ordering::SeqCst);
                         tokio::time::sleep(Duration::from_millis(40)).await;
-                        let answers=body["questions"].as_object().unwrap().keys().map(|id|(id.clone(),json!({"type":"noul","noul":if ["t0_security_fix","t0_cwe_862","t0_e0_security"].contains(&id.as_str()){0.97}else{0.03}}))).collect::<serde_json::Map<_,_>>();
-                        let payload=json!({"model":"mock-jev","answers":answers}).to_string();
+                        let answers=body["questions"].as_object().unwrap().keys().map(|id|{let score:f64=if ["t0_security_fix","t0_cwe_862","t0_e0_security"].contains(&id.as_str()){0.97}else{0.03};(id.clone(),json!(score))}).collect::<serde_json::Map<_,_>>();
+                        let content=Value::Object(answers).to_string();
+                        let payload=json!({"model":"mock-openrouter","choices":[{"message":{"content":content}}]}).to_string();
                         let final_review=body["state"]["reviews"][0]["coverage"]["stage"]=="final_review";
                         bodies.lock().unwrap().push(body);
                         active.fetch_sub(1,Ordering::SeqCst);
@@ -154,7 +159,7 @@ async fn transport_retry_validation_and_cache() {
     let temp = tempfile::tempdir().unwrap();
     let (tx, mut rx) = mpsc::unbounded_channel();
     let (url, server) = mock(vec![429, 200]).await;
-    let j = Jev::new(
+    let j = Router::new(
         "fixture-key".into(),
         "jev-latest".into(),
         temp.path().into(),
@@ -198,14 +203,14 @@ async fn transport_retry_validation_and_cache() {
     );
     let mut invalid = response;
     invalid["answers"]["t0_security_fix"]["noul"] = json!(1.5);
-    assert!(crate::jev::validate(&body, &invalid).is_err());
+    assert!(crate::router::validate(&body, &invalid).is_err());
 }
 #[tokio::test]
 async fn auth_failure_does_not_retry() {
     let temp = tempfile::tempdir().unwrap();
     let (tx, _) = mpsc::unbounded_channel();
     let (url, server) = mock(vec![401]).await;
-    let j = Jev::new(
+    let j = Router::new(
         "secret-key".into(),
         "jev-latest".into(),
         temp.path().into(),
@@ -232,7 +237,7 @@ async fn cancellation_interrupts_inflight_request() {
     let temp = tempfile::tempdir().unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let (tx, _) = mpsc::unbounded_channel();
-    let j = Jev::new(
+    let j = Router::new(
         "key".into(),
         "jev-latest".into(),
         temp.path().into(),
@@ -325,7 +330,7 @@ async fn local_history_dates_literal_paths_and_model_diff() {
     assert_eq!(ids.len(), 1);
     let (tx, mut rx) = mpsc::unbounded_channel();
     let (url, server) = mock(vec![200]).await;
-    let j = Jev::new(
+    let j = Router::new(
         "key".into(),
         "jev-latest".into(),
         temp.path().into(),
@@ -410,7 +415,7 @@ async fn dependency_version_bumps_reach_jev_and_the_table() {
         vec!["t0_change_dependency", "t0_e0_change", "t0_e1_change"],
     )
     .await;
-    let j = Jev::new(
+    let j = Router::new(
         "key".into(),
         "jev-latest".into(),
         temp.path().into(),
@@ -507,7 +512,7 @@ async fn large_commit_reviews_every_section_then_jev_selected_final_review() {
     assert!(evidence.len() > 3);
     let (tx, mut rx) = mpsc::unbounded_channel();
     let (url, server) = parallel_mock().await;
-    let j = Jev::new(
+    let j = Router::new(
         "key".into(),
         "jev-latest".into(),
         temp.path().into(),
@@ -546,7 +551,7 @@ async fn large_commit_reviews_every_section_then_jev_selected_final_review() {
     );
     let mut ids = std::collections::BTreeSet::new();
     for body in &sent[..sent.len() - 1] {
-        assert!(serde_json::to_vec(body).unwrap().len() <= crate::jev::REQUEST_BUDGET);
+        assert!(serde_json::to_vec(body).unwrap().len() <= crate::router::REQUEST_BUDGET);
         let section_count = body["state"]["reviews"][0]["diff_sections"]
             .as_array()
             .unwrap()
@@ -660,7 +665,7 @@ async fn linked_worktree_and_subdirectory_use_their_own_head() {
 #[test]
 fn jev_schema_questions_carry_cwe_semantics_and_reject_invalid_answers() {
     let body = miner::request(&fixture(), &[], 0, "complete_commit", "jev-latest");
-    crate::jev::validate_request(&body).unwrap();
+    crate::router::validate_request(&body).unwrap();
     assert!(
         body["questions"]["t0_cwe_862"]["instructions"]
             .as_str()
@@ -680,19 +685,19 @@ fn jev_schema_questions_carry_cwe_semantics_and_reject_invalid_answers() {
         .map(|id| (id.clone(), json!({"type":"noul","noul":0.9})))
         .collect::<serde_json::Map<_, _>>();
     let response = json!({"model":"jev-latest","answers":answers,"usage":{"input_tokens":300,"output_tokens":50}});
-    crate::jev::validate(&body, &response).unwrap();
+    crate::router::validate(&body, &response).unwrap();
     let mut bad = response.clone();
     bad["answers"].as_object_mut().unwrap().remove("t0_cwe_862");
-    assert!(crate::jev::validate(&body, &bad).is_err());
+    assert!(crate::router::validate(&body, &bad).is_err());
     let mut bad = response.clone();
     bad["answers"]["t0_cwe_862"] = json!({"type":"choice","choice":"yes","confidence":0.99});
-    assert!(crate::jev::validate(&body, &bad).is_err());
+    assert!(crate::router::validate(&body, &bad).is_err());
     let mut bad = response;
     bad["usage"]["input_tokens"] = json!(-1);
-    assert!(crate::jev::validate(&body, &bad).is_err());
+    assert!(crate::router::validate(&body, &bad).is_err());
     let mut bad = body;
     bad["state"] = json!(null);
-    assert!(crate::jev::validate_request(&bad).is_err());
+    assert!(crate::router::validate_request(&bad).is_err());
 }
 
 #[test]
@@ -754,7 +759,7 @@ async fn oversized_questions_share_state_without_losing_answers() {
     let temp = tempfile::tempdir().unwrap();
     let (tx, _) = mpsc::unbounded_channel();
     let (url, server) = mock(vec![200, 200]).await;
-    let j = Jev::new(
+    let j = Router::new(
         "key".into(),
         "jev-latest".into(),
         temp.path().into(),
@@ -774,7 +779,7 @@ async fn oversized_questions_share_state_without_losing_answers() {
     assert_eq!(sent.len(), 2);
     for request in sent {
         assert_eq!(request["state"], body["state"]);
-        assert!(serde_json::to_vec(&request).unwrap().len() <= crate::jev::REQUEST_BUDGET);
+        assert!(serde_json::to_vec(&request).unwrap().len() <= crate::router::REQUEST_BUDGET);
     }
     let (again, cached) = j.evaluate(&body, &CancellationToken::new()).await.unwrap();
     assert!(cached);

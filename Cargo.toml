@@ -2,8 +2,8 @@
 name = "commit-miner"
 version = "0.0.1"
 edition = "2024"
-description = "Jev-powered commit classification with offline diff reports"
-include = ["/src/*.rs", "/tests/*.rs", "/assets/*", "/skills/commit-miner/SKILL.md", "/examples/sample.html", "/README.md", "/docs/JEV_PROTOCOL.md", "/Cargo.toml", "/Cargo.lock"]
+description = "OpenRouter-powered commit classification with offline diff reports"
+include = ["/src/*.rs", "/tests/*.rs", "/assets/*", "/skills/commit-miner/SKILL.md", "/examples/sample.html", "/README.md", "/docs/PROTOCOL.md", "/Cargo.toml", "/Cargo.lock"]
 
 [dependencies]
 anyhow = "1"
