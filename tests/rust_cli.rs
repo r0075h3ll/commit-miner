@@ -21,8 +21,8 @@ fn cli(root: &Path, args: &[&str]) -> std::process::Output {
         .arg("--data-dir")
         .arg(root)
         .args(args)
-        .env("TYPESAFE_API_KEY", "test-cache-only")
-        .env("JEV_MODEL", "jev-latest")
+        .env("OPENROUTER_API_KEY", "test-cache-only")
+        .env("OPENROUTER_MODEL", "jev-latest")
         .output()
         .unwrap()
 }
