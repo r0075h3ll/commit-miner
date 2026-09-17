@@ -54,8 +54,8 @@ fn spawn(root: &Path, source: &str, shim: &str) -> Running {
                 std::env::var("PATH").unwrap()
             ),
         )
-        .env("TYPESAFE_API_KEY", "interrupt-fixture-no-network")
-        .env("JEV_MODEL", "jev-latest")
+        .env("OPENROUTER_API_KEY", "interrupt-fixture-no-network")
+        .env("OPENROUTER_MODEL", "jev-latest")
         .env("FIXTURE_ROOT", root)
         .stdout(Stdio::null())
         .stderr(fs::File::create(root.join("stderr")).unwrap())

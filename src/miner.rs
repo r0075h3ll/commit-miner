@@ -1,8 +1,8 @@
 use crate::{
     git,
-    jev::{Event, Jev, REQUEST_BUDGET},
     model::*,
     policy,
+    router::{Event, REQUEST_BUDGET, Router},
 };
 use anyhow::{Result, ensure};
 use futures::{StreamExt, stream};
@@ -144,7 +144,7 @@ pub async fn mine(
     dir: &Path,
     sha: &str,
     o: &Options,
-    jev: &Jev,
+    router: &Router,
     cancel: &CancellationToken,
     tx: &UnboundedSender<Event>,
 ) -> Result<()> {
@@ -211,7 +211,7 @@ pub async fn mine(
             }
         ));
     }
-    let reviewed = review(&mut result, evidence, o, jev, cancel, tx).await;
+    let reviewed = review(&mut result, evidence, o, router, cancel, tx).await;
     if let Err(e) = &reviewed {
         result.status = if cancel.is_cancelled() {
             "pending"
@@ -228,7 +228,7 @@ async fn review(
     result: &mut ResultRecord,
     mut evidence: Vec<Evidence>,
     o: &Options,
-    jev: &Jev,
+    router: &Router,
     cancel: &CancellationToken,
     tx: &UnboundedSender<Event>,
 ) -> Result<()> {
@@ -259,12 +259,12 @@ async fn review(
         &evidence,
         evidence.len(),
         "complete_commit",
-        &jev.model,
+        &router.model,
     ) <= MAX;
     let groups = if complete {
         vec![evidence]
     } else {
-        partition(&result.commit, &evidence, &jev.model)?
+        partition(&result.commit, &evidence, &router.model)?
     };
     if !complete && result.review_coverage != "metadata" {
         result.review_coverage = "selected".into();
@@ -289,11 +289,11 @@ async fn review(
                 } else {
                     "section_review"
                 },
-                &jev.model,
+                &router.model,
             );
             let c = group_cancel.clone();
             async move {
-                let response = jev.evaluate(&body, &c).await;
+                let response = router.evaluate(&body, &c).await;
                 (index, group, response)
             }
         })
@@ -342,7 +342,7 @@ async fn review(
                     &selected,
                     result.total,
                     "final_review",
-                    &jev.model,
+                    &router.model,
                 ) > MAX
             {
                 selected.pop();
@@ -352,14 +352,14 @@ async fn review(
             !selected.is_empty(),
             "No evidence available for final review"
         );
-        let (r, _) = jev
+        let (r, _) = router
             .evaluate(
                 &request(
                     &result.commit,
                     &selected,
                     result.total,
                     "final_review",
-                    &jev.model,
+                    &router.model,
                 ),
                 cancel,
             )
