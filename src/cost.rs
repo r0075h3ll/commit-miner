@@ -10,17 +10,31 @@ pub struct Price {
 }
 
 fn price(model: &str) -> Option<Price> {
-    // Versioned IDs only: an alias may move to a differently priced model.
-    // https://docs.typesafe.ai/models (1.13.0)
-    // https://docs.typesafe.ai/cookbooks/parallel_questions (1.12)
-    match model {
-        "jev-1.13.0" | "jev-1.12" => Some(Price {
-            input_per_million_usd: 0.042,
-            output_per_million_usd: 0.,
-            checked_on: "2026-09-17".into(),
-        }),
-        _ => None,
-    }
+    // OpenRouter model IDs only: https://openrouter.ai/api/v1/models (checked 2026-09-17).
+    // An alias (":free", ":nitro", no version) can move to a differently priced
+    // backend, so only exact recommended IDs are priced here.
+    let (input, output) = match model {
+        // Open-weight / open-source.
+        "meta-llama/llama-3.3-70b-instruct" => (0.10, 0.32),
+        "meta-llama/llama-4-scout" => (0.10, 0.30),
+        "meta-llama/llama-4-maverick" => (0.1875, 0.6525),
+        "qwen/qwen-2.5-72b-instruct" => (0.36, 0.40),
+        "qwen/qwen3-30b-a3b" => (0.12, 0.50),
+        "deepseek/deepseek-chat-v3.1" => (0.25, 0.95),
+        "mistralai/mistral-small-3.2-24b-instruct" => (0.09375, 0.25),
+        // Low-cost GPT.
+        "openai/gpt-4o-mini" => (0.15, 0.60),
+        "openai/gpt-4.1-mini" => (0.40, 1.60),
+        "openai/gpt-4.1-nano" => (0.10, 0.40),
+        "openai/gpt-5-mini" => (0.25, 2.00),
+        "openai/gpt-5-nano" => (0.05, 0.40),
+        _ => return None,
+    };
+    Some(Price {
+        input_per_million_usd: input,
+        output_per_million_usd: output,
+        checked_on: "2026-09-17".into(),
+    })
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -73,32 +87,29 @@ impl CostEstimate {
 #[cfg(test)]
 mod tests {
     use super::*;
+    const MODEL: &str = "meta-llama/llama-3.3-70b-instruct";
     #[test]
     fn calculates_reported_tokens_and_preserves_the_price_snapshot() {
         let mut cost = CostEstimate::default();
-        cost.record("jev-1.13.0", 100_000, 99_999);
-        assert!((cost.usd().unwrap() - 0.0042).abs() < 1e-12);
-        assert_eq!(cost.label(), "est. $0.004200");
-        cost.record("jev-1.13.0", 900_000, 1);
+        cost.record(MODEL, 1_000_000, 1_000_000);
+        assert!((cost.usd().unwrap() - 0.42).abs() < 1e-12);
+        assert_eq!(cost.label(), "est. $0.420000");
+        cost.record(MODEL, 1_000_000, 0);
         let saved = serde_json::to_vec(&cost).unwrap();
         let restored: CostEstimate = serde_json::from_slice(&saved).unwrap();
         assert_eq!(
-            restored.models["jev-1.13.0"]
-                .price
-                .as_ref()
-                .unwrap()
-                .checked_on,
+            restored.models[MODEL].price.as_ref().unwrap().checked_on,
             "2026-09-17"
         );
-        assert!((restored.usd().unwrap() - 0.042).abs() < 1e-12);
+        assert!((restored.usd().unwrap() - 0.52).abs() < 1e-12);
     }
     #[test]
     fn unknown_models_and_tiny_costs_are_not_shown_as_free() {
         let mut cost = CostEstimate::default();
-        cost.record("jev-1.13.0", 1, 0);
+        cost.record(MODEL, 1, 0);
         assert_eq!(cost.label(), "est. <$0.000001");
-        cost.record("jev-future", 10, 0);
+        cost.record("some-vendor/some-future-model", 10, 0);
         assert_eq!(cost.label(), "cost unavailable");
-        assert!(price("jev-latest").is_none());
+        assert!(price("openai/gpt-6-hypothetical").is_none());
     }
 }

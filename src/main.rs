@@ -4,9 +4,9 @@ use commit_miner::{
     export,
     filter::Filters,
     git,
-    jev::{Event, Jev, MAX_WORKERS},
     miner,
     model::*,
+    router::{Event, Router, MAX_WORKERS},
     store::{self, Store},
     terminal::{ColorMode, Terminal, clean},
 };
@@ -23,7 +23,7 @@ use tokio_util::sync::CancellationToken;
 #[command(
     name = "commit-miner",
     version,
-    about = "Classify Git commits with Jev. Export offline diff reports."
+    about = "Classify Git commits with an LLM via OpenRouter. Export offline diff reports."
 )]
 struct Cli {
     #[arg(
@@ -126,6 +126,13 @@ struct ScanArgs {
     first_parent: bool,
     #[arg(long)]
     no_cache: bool,
+    #[arg(
+        long,
+        env = "OPENROUTER_MODEL",
+        default_value = "meta-llama/llama-3.3-70b-instruct",
+        help = "OpenRouter model ID. Open-weight: meta-llama/llama-3.3-70b-instruct (default), meta-llama/llama-4-scout, meta-llama/llama-4-maverick, qwen/qwen-2.5-72b-instruct, qwen/qwen3-30b-a3b, deepseek/deepseek-chat-v3.1, mistralai/mistral-small-3.2-24b-instruct. Low-cost GPT: openai/gpt-4o-mini, openai/gpt-4.1-mini, openai/gpt-4.1-nano, openai/gpt-5-mini, openai/gpt-5-nano"
+    )]
+    model: String,
     #[command(flatten)]
     filters: Filters,
     #[command(flatten)]
@@ -290,9 +297,10 @@ async fn scan(store: Store, args: ScanArgs, color: ColorMode, plain: bool) -> Re
     if let (Some(a), Some(b)) = (&args.since, &args.until) {
         ensure!(a <= b, "--since must not be after --until");
     }
-    let key = std::env::var("TYPESAFE_API_KEY").context("Set TYPESAFE_API_KEY before scanning")?;
-    ensure!(!key.trim().is_empty(), "TYPESAFE_API_KEY is empty");
-    let model = std::env::var("JEV_MODEL").unwrap_or_else(|_| "jev-latest".into());
+    let key =
+        std::env::var("OPENROUTER_API_KEY").context("Set OPENROUTER_API_KEY before scanning")?;
+    ensure!(!key.trim().is_empty(), "OPENROUTER_API_KEY is empty");
+    let model = args.model.clone();
     let source = if Path::new(&args.source).is_dir() {
         Path::new(&args.source)
             .canonicalize()?
@@ -428,7 +436,7 @@ async fn scan(store: Store, args: ScanArgs, color: ColorMode, plain: bool) -> Re
                 .progress_chars("━╸─"),
             );
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-            let jev = Jev::new(
+            let router = Router::new(
                 key,
                 model,
                 store.root.clone(),
@@ -448,7 +456,7 @@ async fn scan(store: Store, args: ScanArgs, color: ColorMode, plain: bool) -> Re
                         let (repo, o, j, c, t, e) = (
                             repo.clone(),
                             work_options.clone(),
-                            jev.clone(),
+                            router.clone(),
                             worker_cancel.clone(),
                             tx.clone(),
                             work_errors.clone(),
@@ -525,7 +533,7 @@ async fn scan(store: Store, args: ScanArgs, color: ColorMode, plain: bool) -> Re
                         } => {
                             retry_until = retry_until.max(Instant::now() + delay);
                             let msg = format!(
-                                "Jev retry {attempt} · {} · {:.1}s",
+                                "OpenRouter retry {attempt} · {} · {:.1}s",
                                 if status == 0 {
                                     "connection".into()
                                 } else {
@@ -612,7 +620,7 @@ async fn scan(store: Store, args: ScanArgs, color: ColorMode, plain: bool) -> Re
                 let state = if cancel.is_cancelled() {
                     "Stopping · saving completed results".to_string()
                 } else if !retry.is_zero() {
-                    format!("Retrying Jev in {:.0}s", retry.as_secs_f64().ceil())
+                    format!("Retrying OpenRouter in {:.0}s", retry.as_secs_f64().ceil())
                 } else {
                     format!("{} active · {} calls", p.active, p.calls)
                 };
